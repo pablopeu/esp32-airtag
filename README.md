@@ -226,9 +226,9 @@ a Let's Encrypt certificate for `DOMAIN` automatically.
      sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
      sudo netfilter-persistent save
      ```
-2. **DNS**: point a subdomain at the VM, e.g. in your `peu.net` zone:
-   `tag.peu.net.  CNAME  <vm-public-ip-or-hostname>.`
-3. `docker compose up -d --build`, then open `https://tag.peu.net`.
+2. **DNS**: point a subdomain at the VM, e.g. in your `example.com` zone:
+   `tag.example.com.  CNAME  <vm-public-ip-or-hostname>.`
+3. `docker compose up -d --build`, then open `https://tag.example.com`.
 
 For a LAN-only deployment, drop the `caddy` service, publish the app port directly
 and set `HTTPS_ONLY=0`.

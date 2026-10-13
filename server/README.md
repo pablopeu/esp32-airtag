@@ -44,10 +44,10 @@ hashed public keys are sent to Apple (which is exactly what a real AirTag does).
      sudo netfilter-persistent save   # or: sudo service iptables save
      ```
 
-3. **Point the DNS.** In your `peu.net` zone create a CNAME (or an A record to
+3. **Point the DNS.** In your `example.com` zone create a CNAME (or an A record to
    the VM's public IP):
    ```
-   tag.peu.net.  CNAME  <your-vm-public-ip-or-hostname>.
+   tag.example.com.  CNAME  <your-vm-public-ip-or-hostname>.
    ```
    A CNAME on a subdomain is fine. Port 80 must reach the VM so Caddy can
    complete the Let's Encrypt HTTP-01 challenge on first start.
@@ -61,9 +61,9 @@ hashed public keys are sent to Apple (which is exactly what a real AirTag does).
    $EDITOR .env          # DOMAIN, ADMIN_USER, ADMIN_PASSWORD
    docker compose up -d --build
    ```
-   Caddy obtains a certificate and serves `https://tag.peu.net`.
+   Caddy obtains a certificate and serves `https://tag.example.com`.
 
-5. **Log in** at `https://tag.peu.net` with the admin credentials from `.env`.
+5. **Log in** at `https://tag.example.com` with the admin credentials from `.env`.
 
 6. **Connect the Apple ID** in the *Apple account* card. Password is used once
    to obtain tokens and is not stored; the resulting session is written to the
