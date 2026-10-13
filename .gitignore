@@ -120,3 +120,4 @@ server/.env
 server/data/
 __pycache__/
 *.pyc
+dist/

@@ -1,173 +1,296 @@
-# Find You
+# Find You — ESP32 AirTag clone with self-hosted web tracking
 
-A modified version of OpenHaystack to showcase the possibility of building a stealth AirTag clone that bypasses all of Apple's tracking protection features.
+A modified [OpenHaystack](https://github.com/seemoo-lab/openhaystack) firmware and
+tooling to build a stealth AirTag-like tag on an ESP32, plus a **self-hosted web
+interface** to locate it — no Mac, no Android app, any browser.
 
-More information can be found here: [https://positive.security/blog/find-you](https://positive.security/blog/find-you)
+Upstream is Positive Security's [Find You](https://positive.security/blog/find-you)
+research release. This fork completes it: the keypair generator that upstream left
+out as "an exercise for the reader" is implemented, the firmware is battery-friendly,
+and retrieval runs on your own server. The original README is preserved as
+[README.find-you.md](README.find-you.md).
 
-![Find You Cover](Resources/FindYouCover.png)
+> **Research tooling.** It demonstrates that Apple's unwanted-tracking protections
+> can be bypassed by a device that rotates its advertised keys. Use it on devices
+> you own or are explicitly authorised to track. Tracking people without their
+> consent is illegal in most jurisdictions.
 
-**Please note:** The original release purposefully left out `generate_keypairs.py` as an exercise for the reader. This fork includes a working implementation (pure Python, no dependencies): it generates the key pairs on secp224r1, writes the public keys to `pub_keys_c.txt` in the exact format expected by the firmware, and the private keys to `accessory_list.plist` in the format expected by the retrieval application's import.
+## How it works
 
-## Changes
+```
+   ESP32 tag                    iPhones nearby                  Apple
+ ┌───────────┐   BLE beacon   ┌──────────────┐  encrypted   ┌────────────┐
+ │ 1 beacon  │ ─────────────► │ Find My relay│ ───────────► │  reports   │
+ │ per key,  │  (public key)  │  (anonymous) │   location   │  database  │
+ │ 30 s      │                └──────────────┘              └─────┬──────┘
+ └───────────┘                                                    │ hashed keys
+       ▲                                                          ▼
+       │ flashed public keys                        ┌──────────────────────────┐
+       │                                             │  your server (this repo) │
+ ┌─────┴─────────────┐   accessory_list.plist       │  fetch → decrypt → map   │
+ │ generate_keypairs │ ───────────────────────────► │  private keys stay here  │
+ └───────────────────┘   (private keys)             └──────────────────────────┘
+```
 
-### Tracker side
+Each key is advertised exactly once — one beacon, then the next key. Because the
+public key never repeats within a full rotation, the tag is not flagged as
+"following" anyone, which is what Apple's anti-stalking logic keys on. The phone
+uploads an encrypted location report per beacon; only the private key (yours,
+on your server) can decrypt it.
 
-- Added a python script (`generate_keypairs.py`) that pregenerates EC key pairs and generates:
-  - A list of public keys in C source code format to add to the firmware
-  - A list of private keys as an OpenHaystack-compatible `.plist` file to import in the retrieval application
-- Added support to iterate over a preloaded list of public keys with 1 beacon per key and a configurable delay
+The rotation is what the [blog post](https://positive.security/blog/find-you)
+calls the core trick: 2000 keys at one beacon every 30 s repeat after ~16.7 hours.
 
-### Retrieval side
+## What is in this repository
 
-- Optimized the application to be able to handle thousands of tags
-  - Combined public keys to request across different tags into a single HTTP request
-  - Slightly optimized quadratic complexity when assigning decrypted reports to accessories
-  - Removed keychain operations (the app will always start without any tags configured)
+| Path | What it is |
+|---|---|
+| `generate_keypairs.py` | Generates the key set: public keys as a C array + private keys as an OpenHaystack plist |
+| `build_firmware.sh` | One command: generate keys → inject → build with ESP-IDF → single flashable binary in `dist/` |
+| `Firmware/ESP32/` | ESP-IDF project; advertises one preloaded key per boot, then deep-sleeps |
+| `server/` | Self-hosted web tracker (Docker Compose: app + anisette + Caddy/HTTPS) — see [server/README.md](server/README.md) |
+| `OpenHaystack/` | Upstream macOS app (alternative retrieval client, needs a Mac + Xcode) |
+| `Firmware/Microbit_v1/`, `Firmware/Linux_HCI/` | Upstream firmwares for other hardware |
+| `README.Reproducibility.md`, `CVE-2020-9986/`, `Resources/` | Upstream research artifacts |
+| `README.find-you.md` | The historical upstream README |
 
-## Instructions
+## Requirements
 
-1. Run `generate_keypairs.py` with the number of keypairs to generate as argument (e.g. `python3 generate_keypairs.py 2000`, optionally `--seed HEX` for reproducible key sets)
-2. Copy the array definition in `pub_keys_c.txt` into `Firmware/ESP32/main/openhaystack_main.c` (if desired, also change the delay time between beacons)
-3. Compile firmware and flash ESP32
-4. Import `accessory_list.plist` into a retrieval application (the macOS
-   OpenHaystack app, or the self-hosted web interface in [`server/`](server/))
+- **Keys + build:** Python 3 (stdlib only) and Docker (the ESP-IDF toolchain runs in
+  a container; no local ESP-IDF install needed).
+- **Flashing:** `esptool` — `pip install esptool`, or use `Firmware/ESP32/flash_esp32.sh`
+  which sets up its own virtualenv.
+- **Server:** Docker + Compose v2, an Apple ID, and a hostname if you want HTTPS.
+- **Hardware:** an ESP32 module (2 MB flash or more; a bare WROOM/WROVER works).
 
-> **Web interface:** [`server/`](server/) contains a self-hosted, browser-based
-> tracking server (Docker Compose: app + anisette-server + Caddy with automatic
-> HTTPS). It tracks any number of tags, shows a map with history and needs no
-> macOS or Android client. See [`server/README.md`](server/README.md).
+---
 
+## 1. Generate the key set
 
-# <img src="Resources/Icon/OpenHaystackIcon.png" alt="OpenHaystack application icon" height=42 width=42 valign=bottom /> OpenHaystack
+```bash
+python3 generate_keypairs.py 2000
+```
 
-OpenHaystack is a framework for tracking personal Bluetooth devices via Apple's massive Find My network. Use it to create your own tracking _tags_ that you can append to physical objects (keyrings, backpacks, ...) or integrate it into other Bluetooth-capable devices such as notebooks.
+This writes two files in the repository root:
 
-<img src="Resources/OpenHaystack-Screenshot.png" alt="Screenshot of the app" width="701" />
+| File | Contents | Where it goes |
+|---|---|---|
+| `pub_keys_c.txt` | 2000 public keys (28-byte X coordinates) as a C array | Injected into the firmware |
+| `accessory_list.plist` | The matching 2000 private keys | Imported into the server (or the macOS app) |
 
-## Table of contents
+Options:
 
-- [What is _OpenHaystack_?](#what-is-openhaystack)
-  - [History](#history)
-  - [Disclaimer](#disclaimer)
-- [How to use _OpenHaystack_?](#how-to-use-openhaystack)
-  - [System requirements](#system-requirements)
-  - [Installation](#installation)
-  - [Usage](#usage)
-- [How does Apple's Find My network work?](#how-does-apples-find-my-network-work)
-  - [Pairing](#pairing-1)
-  - [Losing](#losing-2)
-  - [Finding](#finding-3)
-  - [Searching](#searching-4)
-- [How to track other Bluetooth devices?](#how-to-track-other-bluetooth-devices)
-- [Authors](#authors)
-- [References](#references)
-- [License](#license)
+```bash
+python3 generate_keypairs.py 5000              # more keys = longer rotation
+python3 generate_keypairs.py 2000 --seed AABB… # reproducible key set (demo/testing)
+```
 
-## What is _OpenHaystack_?
+**Key count vs. rotation time.** The tag sends one beacon per key, then waits
+`DELAY_IN_S` (default 30 s). A full cycle therefore takes `count × 30 s`:
+1000 keys ≈ 8.3 h, 2000 ≈ 16.7 h, 5000 ≈ 41.7 h. More keys means the same public
+key reappears less often (less chance of being clustered as a follower), at the
+cost of flash space (28 bytes per key) and a slower per-key location update.
 
-OpenHaystack is an application that allows you to create your own accessories that are tracked by Apple's [Find My network](#how-does-apples-find-my-network-work). All you need is a Mac and a [BBC micro:bit](https://microbit.org/) or any [other Bluetooth-capable device](#how-to-track-other-bluetooth-devices).
-By using the app, you can track your accessories anywhere on earth without cellular coverage. Nearby iPhones will discover your accessories and upload their location to Apple's servers when they have a network connection.
+**`accessory_list.plist` contains your private keys.** It is the only thing that
+can decrypt the tag's locations. Never commit it (it is gitignored here), never
+share it, and back it up: lose it and the tag's history is unreadable forever.
 
-### History
+> **Demo seed.** Release v1.0.0 ships a binary and a matching plist built from the
+> public seed `66696e642d796f752d64656d6f2d7631` (see
+> [the demo binary](#no-build-at-all-the-demo-binary)). Anyone can derive those
+> private keys — demo only, never for a real deployment.
 
-OpenHaystack is the result of reverse-engineering and security analysis work of Apple's _Find My network_ (or _offline finding_). We at the [Secure Mobile Networking Lab](https://seemoo.de) of TU Darmstadt started analyzing offline finding after its initial announcement in June 2019. We identified how Apple devices can be found by iPhones devices, even when they are offline through this work. The whole system is a clever combination of Bluetooth advertisements, public-key cryptography, and a central database of encrypted location reports. We disclosed a specification of the closed parts of offline finding and conducted a comprehensive security and privacy analysis.
-We found two distinct vulnerabilities. The most severe one, which allowed a malicious application to access location data, has meanwhile been fixed by Apple ([CVE-2020-9986](https://support.apple.com/en-us/HT211849)).
-For more information about the security analysis, please read [our paper](#references).
-Since its release, we received quite a bit of [press and media coverage](https://owlink.org/press/).
+---
 
-### Disclaimer
+## 2. Build the firmware
 
-OpenHaystack is experimental software. The code is untested and incomplete. For example, OpenHaystack accessories using our [firmware](Firmware) broadcast a fixed public key and, therefore, are trackable by other devices in proximity (this might change in a future release). OpenHaystack is not affiliated with or endorsed by Apple Inc.
+### One command (recommended)
 
-## How to use _OpenHaystack_?
+```bash
+./build_firmware.sh --keys 2000        # or: --skip-keys to reuse pub_keys_c.txt
+```
 
-OpenHaystack consists of two components. First, we provide a [macOS application](OpenHaystack) that can display the last reported location of your personal Bluetooth devices. Second, the [firmware image](Firmware) enables Bluetooth devices to broadcast beacons that make them discoverable by iPhones.
+The script generates the keys if needed, injects them into a copy of the firmware,
+builds inside the official `espressif/idf:v4.4.7` container (first run pulls ~1.5 GB)
+and merges everything into `dist/`:
 
-### System requirements
+```
+dist/openhaystack.bin          the app (flash at 0x10000)
+dist/bootloader.bin            (0x1000)
+dist/partition-table.bin       (0x8000)
+dist/flash-all-2mb.bin         all three merged (flash at 0x0)
+```
 
-OpenHaystack requires macOS 11 (Big Sur).
+Useful flags: `--delay 60` (beacon interval), `--seed HEX`, `--native` (use a local
+ESP-IDF instead of Docker), `--image TAG` (different ESP-IDF container).
 
-### Installation
+### Manual build
 
-The OpenHaystack application requires a custom plugin for Apple Mail. It is used to download location reports from Apple's servers via a private API (technical explanation: the plugin inherits Apple Mail's entitlements required to use this API).
-Therefore, the installation procedure is slightly different and requires you to temporarily disable [Gatekeeper](https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/1/web/1).
-Our plugin does not access any other private data such as emails (see [source code](OpenHaystack/OpenHaystackMail)).
+1. Copy the array from `pub_keys_c.txt` over the `public_keys` definition in
+   `Firmware/ESP32/main/openhaystack_main.c` (around line 46).
+2. Optionally change `#define DELAY_IN_S 30`.
+3. Build with ESP-IDF ≥ v4.4: `idf.py build` inside `Firmware/ESP32/`.
 
-1. Download a precompiled binary release from our <a href="https://github.com/seemoo-lab/openhaystack/releases">GitHub page</a>.  
-   _Alternative:_ build the application from source via Xcode.
-2. Open OpenHaystack. This will ask you to install the Mail plugin in `~/Library/Mail/Bundle`.
-3. Open a terminal and run `sudo spctl --master-disable`, which will disable Gatekeeper and allow our Apple Mail plugin to run.
-4. Open Apple Mail. Go to _Preferences_ → _General_ → _Manage Plug-Ins..._ and activate the checkbox next to _OpenHaystackMail.mailbundle_.
-   * If the _Manage Plug-Ins..._ button does not appear. Run this command in terminal `sudo defaults write "/Library/Preferences/com.apple.mail" EnableBundles 1`
-5. Allow access and restart Mail.
-6. Open a terminal and enter `sudo spctl --master-enable`, which will enable Gatekeeper again.
+The app partition is 1 MB; each key costs 28 bytes (2000 keys ≈ 55 KB), so a
+2000-key build lands at ~752 KB — 73% of the partition. If you hit "binary size
+exceeds partition" with very large key sets, reduce the key count or enlarge
+`factory` in `Firmware/ESP32/partitions.csv`.
 
-### Usage
+### No build at all: the demo binary
 
-**Adding a new accessory.**
-To create a new accessory, you just need to enter a name for it and optionally select a suitable icon and a color. The app then generates a new key pair that is used to encrypt and decrypt the location reports. The private key is stored in your Mac's keychain.
+Release [v1.0.0](https://github.com/pablopeu/esp32-airtag/releases/tag/v1.0.0)
+ships a ready-to-flash image built from the public demo seed, so you can test the
+whole pipeline before touching the toolchain:
 
-**Deploy to device.**
-Connect a [supported device](#how-to-track-other-bluetooth-devices) via USB to your Mac and hit the _Deploy_ button next to the accessory's name and choose the corresponding.
-Instead of using OpenHaystack's integrated deployment, you may also copy the public key used for advertising (right click on accessory) and deploy it manually.
+```
+openhaystack-esp32-demo-flash-all-2mb.bin    flash at 0x0
+accessory_list_demo.plist                    import into the server
+```
 
-**Display devices' locations.**
-It can take up to 30 minutes until you will see the first location report on the map on the right side. The map will always show all your items' most recent locations. You can click on every item to check when the last update was received.
-By clicking the reload button, you can update the location reports.
+Those keys are derived from a seed printed in this repository: treat the demo tag
+as public and never use it for anything real.
 
-## How does Apple's Find My network work?
+### Battery behaviour
 
-We briefly explain Apple's offline finding system (aka [_Find My network_](https://developer.apple.com/find-my/)). Please refer to our [PETS paper and Apple's accessory specification](#references) for more details. We provide a schematic overview (from our paper) and explain how we integrate the different steps in OpenHaystack below.
+Each wake-up sends exactly one beacon (~100 ms of radio), stops advertising and
+enters `esp_deep_sleep` (~10 µA on a bare module) for the beacon interval. The
+rotation index is kept in RTC memory so the sequence continues across sleep cycles.
 
-![Find My Overview](Resources/FindMyOverview.png)
+Expect weeks to months on a LiPo cell (e.g. ~300 µA average for a 30 s interval,
+including the boot overhead) — but note that a typical **development board adds its
+own quiescent drain** (USB-serial chip, LDO, power LED: often 100–500 µA), which can
+dominate the budget. For a long-lived build, use a bare module or remove those parts.
 
-### Pairing (1)
+Avoid rebuilding with a *different* key count and re-flashing without erasing: the
+firmware detects the mismatch and restarts the rotation from key 0, so it is safe,
+but the old rotation position is lost.
 
-To use Apple's Find My network, we generate a public-private key pair on an elliptic curve (P-224). The private key remains on the Mac securely stored in the keychain, and the public key is deployed on the accessory, e.g., an attached micro:bit.
+---
 
-### Losing (2)
+## 3. Flash the ESP32
 
-In short, the accessories broadcast the public key as Bluetooth Low Energy (BLE) advertisements (see [firmware](Firmware)).
-Nearby iPhones will not be able to distinguish our accessories from a genuine Apple device or certified accessory.
+```bash
+# Single file (2 MB module, erases nothing else):
+esptool.py --chip esp32 write_flash 0x0 dist/flash-all-2mb.bin
 
-### Finding (3)
+# Or the three parts, same layout the repo's flasher script uses:
+esptool.py --chip esp32 write_flash \
+    0x1000 dist/bootloader.bin \
+    0x8000 dist/partition-table.bin \
+    0x10000 dist/openhaystack.bin
+```
 
-When a nearby iPhone receives a BLE advertisement, the iPhone fetches its current location via GPS, encrypts it using public key from the advertisement, and uploads the encrypted report to Apple's server.
-All iPhones on iOS 13 or newer do this by default. OpenHaystack is not involved in this step.
+`Firmware/ESP32/flash_esp32.sh -p /dev/ttyUSB0` does the three-part flash for you
+(create the venv with esptool on first run). Watch the serial log at 115200 baud:
+each boot prints the key index, the random device address and the deep-sleep entry.
 
-### Searching (4)
+An ESP32 alone is enough — no phone, no pairing, no account on the device.
 
-Apple does not know which encrypted locations belong to which Apple account or device. Therefore, every Apple user can download any location report as long as they know the corresponding public key. This is not a security issue: all reports are end-to-end encrypted and cannot be decrypted unless one knows the corresponding private key (stored in the keychain). We leverage this feature to download the reports from Apple that have been created for our OpenHaystack accessories. We use our private keys to decrypt the location reports and show the most recent one on the map.
+---
 
-Apple protects their database against arbitrary access by requiring an authenticated Apple user to download location reports.
-We use our Apple Mail plugin, which runs with elevated privileges, to access the required authentication information. The OpenHaystack app communicates with the plugin while downloading reports. This is why you need to keep Mail open while using OpenHaystack.
+## 4. Run the tracking server
 
-## How to track other Bluetooth devices?
+Full details, including options and troubleshooting, are in
+[`server/README.md`](server/README.md). The short path:
 
-In principle, any Bluetooth device can be turned into an OpenHaystack accessory that is trackable via Apple's Find My network.
-Currently, we provide a convenient deployment method of our OpenHaystack firmwares for a small number of embedded devices (see table below). We also support Linux devices via our generic HCI script.
-Feel free to port OpenHaystack to other devices that support Bluetooth Low Energy based on the [source code of our firmware](Firmware) and the specification in [our paper](#references). Please share your results with us!
+```bash
+cd server
+cp .env.example .env
+$EDITOR .env            # DOMAIN, ADMIN_USER, ADMIN_PASSWORD
+docker compose up -d --build
+```
 
-| Platform | Tested on | Deploy via app | Comment |
-|----------|-----------|:--------------:|---------|
-| [Nordic nRF51](Firmware/Microbit_v1) | BBC micro:bit v1 | ✓ | Only supports nRF51822 at this time (see issue #6). |
-| [Espressif ESP32](Firmware/ESP32) | SP32-WROOM, ESP32-WROVER | ✓ | Deployment can take up to 3 minutes. Requires Python 3. Thanks **@fhessel**. |
-| [Linux HCI](Firmware/Linux_HCI) | Raspberry Pi 4 w/ Raspbian | | Should support any Linux machine. |
+That starts three containers: the tracker app, `anisette-server` (it supplies the
+Apple attestation headers, which is why no Mac is required) and Caddy, which obtains
+a Let's Encrypt certificate for `DOMAIN` automatically.
 
-![Setup](Resources/Setup.jpg)
+### On an Oracle Cloud free VM
 
-## Authors
+1. **Firewall, both layers** (Oracle blocks 80/443 by default):
+   - VCN → Security List → ingress rules for TCP 80 and 443.
+   - On the instance:
+     ```bash
+     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+     sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+     sudo netfilter-persistent save
+     ```
+2. **DNS**: point a subdomain at the VM, e.g. in your `peu.net` zone:
+   `tag.peu.net.  CNAME  <vm-public-ip-or-hostname>.`
+3. `docker compose up -d --build`, then open `https://tag.peu.net`.
 
-- **Alexander Heinrich** ([@Sn0wfreezeDev](https://github.com/Sn0wfreezeDev), [email](mailto:aheinrich@seemoo.tu-darmstadt.de))
-- **Milan Stute** ([@schmittner](https://github.com/schmittner), [email](mailto:mstute@seemoo.tu-darmstadt.de), [web](https://seemoo.de/mstute))
+For a LAN-only deployment, drop the `caddy` service, publish the app port directly
+and set `HTTPS_ONLY=0`.
 
-## References
+### First run
 
-- Alexander Heinrich, Milan Stute, Tim Kornhuber, Matthias Hollick. **Who Can _Find My_ Devices? Security and Privacy of Apple's Crowd-Sourced Bluetooth Location Tracking System.** _Proceedings on Privacy Enhancing Technologies (PoPETs)_, 2021. [doi:10.2478/popets-2021-0045](https://doi.org/10.2478/popets-2021-0045) [📄 Paper](https://www.petsymposium.org/2021/files/papers/issue3/popets-2021-0045.pdf) [📄 Preprint](https://arxiv.org/abs/2103.02282).
-- Alexander Heinrich, Milan Stute, and Matthias Hollick. **DEMO: OpenHaystack: A Framework for Tracking Personal Bluetooth Devices via Apple’s Massive Find My Network.** _14th ACM Conference on Security and Privacy in Wireless and Mobile (WiSec ’21)_, 2021.
-- Tim Kornhuber. **Analysis of Apple's Crowd-Sourced Location Tracking System.** _Technical University of Darmstadt_, Master's thesis, 2020.
-- Apple Inc. **Find My Network Accessory Specification – Developer Preview – Release R3.** 2020. [📄 Download](https://developer.apple.com/find-my/).
+1. **Log in** with `ADMIN_USER` / `ADMIN_PASSWORD`.
+2. **Connect the Apple ID** in the *Apple account* card. The password is used once to
+   obtain tokens and is never stored; only the resulting session is written to the
+   data volume. Enter the 2FA code when prompted (trusted device or SMS). Use an
+   Apple ID you can afford to lose — Apple's Find My API is undocumented and
+   accounts have been locked for unusual API use.
+3. **Import the tag**: *Add tags* → upload `accessory_list.plist` → keep
+   **Merge all keys into one tag** checked (one physical ESP32 = one tag with all its
+   keys) → Import. You can also paste individual keys (hex or base64, one per line)
+   for tags that use a single fixed key.
+4. **Wait for a location.** The map fills as soon as an iPhone passes near the tag
+   and the next poll runs (default every 15 min; use **Refresh** to poll now).
 
-## License
+### Using it
 
-OpenHaystack and Find You is licensed under the [**GNU Affero General Public License v3.0**](LICENSE).
+- **Dashboard**: every tag with its key count, last position and age; add, delete,
+  refresh.
+- **Tag page**: Leaflet map with the latest position, the trail for the selected
+  window (6 h – 30 days) and the report table (click a row to zoom).
+- Reports are stored locally in SQLite (`RETENTION_DAYS`, default 30). Only hashed
+  public keys ever leave your server.
+
+### Operating it
+
+```bash
+docker compose logs -f tracker                          # poll results, errors
+docker compose pull && docker compose up -d --build     # update
+docker compose down                                     # stop (volumes persist)
+```
+
+Back up the `tracker-data` volume: it holds the database, the Apple session and the
+cookie secret. If you lose it you must re-import the plist and log into Apple again.
+
+Set `ADMIN_PASSWORD_HASH` instead of a plaintext password with:
+
+```bash
+docker compose exec tracker python -c \
+  "from app.security import hash_password; print(hash_password('your-password'))"
+```
+
+---
+
+## Alternative: the macOS app
+
+`OpenHaystack/` still contains the upstream macOS retrieval application, which this
+fork's `accessory_list.plist` is also compatible with. It needs a Mac with Xcode;
+build and run it, then *Import accessories* and select the plist. It fetches and
+decrypts exactly like the server does. For a headless setup (a VPS, a NAS, a Pi),
+use `server/` instead.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| No location for hours | Normal if no Apple device passed nearby. A tag sitting at home updates whenever a phone comes close (delivery people, neighbours, passers-by). |
+| Location is old but plausible | Reports only refresh while the tag is advertising (it sleeps between beacons) and someone relays it. Increase `POLL_MINUTES` only if you need fresher data — Apple rate-limits. |
+| `refresh failed: no_apple_account` | Connect the Apple ID in the UI. |
+| Apple login fails or loops on 2FA | Wrong password, an Apple ID without Find My, or a flagged account. Try another Apple ID. |
+| `apple_state_require_2fa` in logs | The session expired; log in again and complete 2FA. |
+| Tag never appears, no key index in serial log | Firmware not flashed correctly (check the offsets) or the plist was imported into a different server. |
+| `binary size exceeds partition` | Too many keys for the 1 MB app partition: lower the key count or resize `factory` in `partitions.csv`. |
+| Build fails on a newer ESP-IDF | Use the container (`./build_firmware.sh`), which pins IDF v4.4.7. |
+
+## Credits and licence
+
+- Original research and release: [Positive Security](https://positive.security/blog/find-you);
+  base framework: [OpenHaystack](https://github.com/seemoo-lab/openhaystack) (SEEMOO, TU Darmstadt).
+- Key generation, battery-optimised rotation, build tooling and the web server: this fork.
+- Licence: AGPL-3.0-only, as upstream — see [LICENSE](LICENSE).
