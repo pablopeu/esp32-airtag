@@ -393,7 +393,17 @@ use `server/` instead.
 
 ## Credits and licence
 
-- Original research and release: [Positive Security](https://positive.security/blog/find-you);
-  base framework: [OpenHaystack](https://github.com/seemoo-lab/openhaystack) (SEEMOO, TU Darmstadt).
+- Original research and release: [Positive Security](https://positive.security/blog/find-you)
+  (`positive-security/find-you`); base framework:
+  [OpenHaystack](https://github.com/seemoo-lab/openhaystack) (SEEMOO, TU Darmstadt).
 - Key generation, battery-optimised rotation, build tooling and the web server: this fork.
 - Licence: AGPL-3.0-only, as upstream — see [LICENSE](LICENSE).
+
+### Provenance and the fork label
+
+Upstream published its whole release as a single commit (`ab7a3a9`). This repository
+was created by forking [AscndX/esp32-airtag](https://github.com/AscndX/esp32-airtag),
+which points at that same commit and adds none of its own, so the label GitHub shows
+above is the repository that was forked rather than where the code comes from: the
+tree here is upstream's commit plus the commits listed in the log. The root of the
+network is `positive-security/find-you`.
