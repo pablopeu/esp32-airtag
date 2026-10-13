@@ -147,8 +147,20 @@ openhaystack-esp32-demo-flash-all-2mb.bin    flash at 0x0
 accessory_list_demo.plist                    import into the server
 ```
 
-Those keys are derived from a seed printed in this repository: treat the demo tag
-as public and never use it for anything real.
+**Read this before flashing the demo image.** Every ESP32 flashed with it advertises
+the *same* 2000 keys — and in Find My a tag's identity *is* its key; there is no
+per-device identifier in a location report, by design. So two demo tags are not two
+similar tags, they are **one tag**: your server fetches and decrypts the reports of
+all of them, and their locations merge into a single trail that cannot be taken
+apart. If someone else runs the demo in another city, your dashboard will happily
+show their position as your tag's latest, interleaved with yours in the history.
+(The plist is public too, so a third party can watch your demo tag as well.)
+
+Treat it strictly as a smoke test: flash it, confirm the pipeline works end to end,
+then generate your own keys. For anything real,
+`python3 generate_keypairs.py 2000` — its default random seed gives you a key set
+that nobody else has. The same applies to `--seed`: it exists for reproducible
+tests, and two people using the same seed get the same collision.
 
 ### Battery behaviour
 
