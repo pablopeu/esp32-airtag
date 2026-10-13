@@ -1,0 +1,47 @@
+services:
+  anisette:
+    image: dadoum/anisette-v3-server:latest
+    restart: unless-stopped
+    # No ports exposed: only the tracker reaches it, over the compose network.
+    volumes:
+      - anisette-data:/home/Alcoholic/.config/anisette-v3
+
+  tracker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - anisette
+    environment:
+      ANISETTE_URL: http://anisette:6969
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      SECRET: ${SECRET:-}
+      POLL_MINUTES: ${POLL_MINUTES:-15}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      FETCH_WINDOW_HOURS: ${FETCH_WINDOW_HOURS:-168}
+      HTTPS_ONLY: ${HTTPS_ONLY:-1}
+      PORT: "8080"
+    volumes:
+      - tracker-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - tracker
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  anisette-data:
+  tracker-data:
+  caddy-data:
+  caddy-config:

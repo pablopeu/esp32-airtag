@@ -1,0 +1,5 @@
+# Caddy terminates TLS (Let's Encrypt) for {$DOMAIN} and proxies to the app.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy tracker:8080
+}

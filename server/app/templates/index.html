@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Tags — Find You{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h2>Apple account</h2>
+  <div id="apple-status" class="muted">Checking…</div>
+
+  <form id="apple-login-form" class="stack" hidden>
+    <label>Apple ID
+      <input name="username" type="email" autocomplete="username" placeholder="you@icloud.com">
+    </label>
+    <label>Password
+      <input name="password" type="password" autocomplete="current-password">
+    </label>
+    <p class="muted small">Used once to obtain Find My access tokens. The password is not
+      stored; only the resulting session is kept on this server.</p>
+    <button class="btn primary" type="submit">Log in to Apple</button>
+  </form>
+
+  <form id="apple-2fa-form" class="stack" hidden>
+    <p>Enter the 6-digit code from a trusted device (or request an SMS).</p>
+    <div id="apple-2fa-methods" class="row"></div>
+    <label>Code
+      <input name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code">
+    </label>
+    <input type="hidden" name="method" value="trusted_device">
+    <input type="hidden" name="phone_id">
+    <button class="btn primary" type="submit">Submit code</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Add tags</h2>
+  <form id="import-form" class="stack" enctype="multipart/form-data">
+    <label>Name <input name="name" placeholder="Bike, backpack…"></label>
+    <label class="file">accessory_list.plist
+      <input type="file" name="plist" accept=".plist">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="single_tag" checked>
+      Merge all keys into one tag (key-rotation firmware)
+    </label>
+    <details>
+      <summary>…or paste keys (hex/base64, one per line)</summary>
+      <textarea name="keys" rows="4" placeholder="1a2b3c…  (28-byte secp224r1 private keys)"></textarea>
+    </details>
+    <button class="btn primary" type="submit">Import</button>
+  </form>
+</section>
+
+<section class="card">
+  <div class="row spread">
+    <h2>Tags</h2>
+    <span class="muted small" id="refresh-info"></span>
+  </div>
+  <div id="tag-list" class="tag-list"><p class="muted">Loading…</p></div>
+</section>
+
+{% endblock %}
+{% block scripts %}<script>initIndex();</script>{% endblock %}

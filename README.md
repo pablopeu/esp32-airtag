@@ -29,7 +29,13 @@ More information can be found here: [https://positive.security/blog/find-you](ht
 1. Run `generate_keypairs.py` with the number of keypairs to generate as argument (e.g. `python3 generate_keypairs.py 2000`, optionally `--seed HEX` for reproducible key sets)
 2. Copy the array definition in `pub_keys_c.txt` into `Firmware/ESP32/main/openhaystack_main.c` (if desired, also change the delay time between beacons)
 3. Compile firmware and flash ESP32
-4. Compile and run the macOS retrieval application and import `accessory_list.plist` (generated in step #1)
+4. Import `accessory_list.plist` into a retrieval application (the macOS
+   OpenHaystack app, or the self-hosted web interface in [`server/`](server/))
+
+> **Web interface:** [`server/`](server/) contains a self-hosted, browser-based
+> tracking server (Docker Compose: app + anisette-server + Caddy with automatic
+> HTTPS). It tracks any number of tags, shows a map with history and needs no
+> macOS or Android client. See [`server/README.md`](server/README.md).
 
 
 # <img src="Resources/Icon/OpenHaystackIcon.png" alt="OpenHaystack application icon" height=42 width=42 valign=bottom /> OpenHaystack
