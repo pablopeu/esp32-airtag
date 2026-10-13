@@ -113,7 +113,12 @@ iOSInjectionProject/
 Exports/
 # find-you key generation outputs (contain private keys)
 pub_keys_c.txt
-accessory_list.plist
+accessory_list*.plist
+
+# Multi-device provisioning: keys/pool and devices/<name> hold private keys,
+# devices/registry.json maps the whole fleet. Never commit any of it.
+keys/
+devices/
 
 # Tracking server
 server/.env

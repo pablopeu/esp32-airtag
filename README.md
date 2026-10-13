@@ -46,6 +46,7 @@ calls the core trick: 2000 keys at one beacon every 30 s repeat after ~16.7 hour
 | Path | What it is |
 |---|---|
 | `generate_keypairs.py` | Generates the key set: public keys as a C array + private keys as an OpenHaystack plist |
+| `provision.py` | Runs several tags from one key pool with disjoint slices, and verifies that none collide |
 | `build_firmware.sh` | One command: generate keys → inject → build with ESP-IDF → single flashable binary in `dist/` |
 | `Firmware/ESP32/` | ESP-IDF project; advertises one preloaded key per boot, then deep-sleeps |
 | `server/` | Self-hosted web tracker (Docker Compose: app + anisette + Caddy/HTTPS) — see [server/README.md](server/README.md) |
@@ -95,6 +96,10 @@ cost of flash space (28 bytes per key) and a slower per-key location update.
 can decrypt the tag's locations. Never commit it (it is gitignored here), never
 share it, and back it up: lose it and the tag's history is unreadable forever.
 
+> **More than one tag?** Generating a set per device and keeping them apart by hand
+> is how collisions happen. Use [`provision.py`](#running-several-tags) instead: one
+> key pool, a disjoint slice per device, and a `verify` that proves it.
+
 > **Demo seed.** Release v1.0.0 ships a binary and a matching plist built from the
 > public seed `66696e642d796f752d64656d6f2d7631` (see
 > [the demo binary](#no-build-at-all-the-demo-binary)). Anyone can derive those
@@ -122,7 +127,9 @@ dist/flash-all-2mb.bin         all three merged (flash at 0x0)
 ```
 
 Useful flags: `--delay 60` (beacon interval), `--seed HEX`, `--native` (use a local
-ESP-IDF instead of Docker), `--image TAG` (different ESP-IDF container).
+ESP-IDF instead of Docker), `--image TAG` (different ESP-IDF container),
+`--keys-file PATH` and `--out-dir DIR` (build from, and write to, somewhere else —
+this is what `provision.py build` uses).
 
 ### Manual build
 
@@ -277,6 +284,87 @@ docker compose exec tracker python -c \
 
 ---
 
+## Running several tags
+
+Everything above describes one device. As soon as you run two, a new failure mode
+appears: to Find My a tag **is** its keys, so two devices that share any key are one
+identity whose locations merge with no way to separate them afterwards (the demo
+binary in section 2 is that case on purpose).
+
+`provision.py` rules it out by construction: it generates one large key pool and
+gives each device its own **disjoint slice** of it.
+
+```bash
+python3 provision.py pool --keys 10000          # once, for the whole fleet
+python3 provision.py device garage --keys 2000  # allocate a slice per device
+python3 provision.py build garage               # keys → firmware, via build_firmware.sh
+python3 provision.py device car --keys 3000     # the next free slice
+python3 provision.py build car
+
+python3 provision.py status                     # pool and devices at a glance
+python3 provision.py verify                     # proves there is no collision
+```
+
+Each `device` command creates `devices/<name>/`, all of it gitignored:
+
+| File | What it is |
+|---|---|
+| `pub_keys_c.txt` | that device's slice, as the firmware C array |
+| `accessory_list.plist` | that device's slice, for the server import |
+| `manifest.json` | slice range, key count, fingerprint, dates |
+| `dist/` | the firmware, once you run `build` |
+
+The allocation is recorded in `devices/registry.json`, so slices are handed out from
+the first free offset (`--offset` to place one explicitly) and never overlap. Each
+device keeps its own rotation — a cycle is `count × beacon interval` — so differently
+sized slices just rotate at their own rate, independently.
+
+**Sizes.** The pool only needs to be at least the sum of the devices' key counts:
+10000 keys cover five 2000-key devices. Keys cost 28 bytes of flash each, and the app
+partition is 1 MB, so a slice can be large — a ~700 KB base firmware leaves room for
+roughly 11000 keys — but remember that a longer rotation is also a slower per-key
+location update, and that the pool has to cover every device at once.
+
+**Importing.** Flash the device as in section 3, then in the server upload
+`devices/<name>/accessory_list.plist`, type the device name in the *Name* field and
+keep **Merge all keys into one tag** checked. One device becomes one tag, and the
+tag's name is what you typed.
+
+### What `verify` proves
+
+```bash
+python3 provision.py verify          # derives every public key (~5 s for 5000)
+python3 provision.py verify --fast   # samples 20 keys per device instead
+```
+
+For every device it checks that the private keys in the plist really derive the
+public keys in the C array, that the file still matches the fingerprint recorded at
+provisioning time, that no two devices share a key, and — once a firmware exists —
+that the firmware carries that device's whole key set and none of another's. That
+last check parses the ESP32 app image and rebuilds the memory layout rather than
+searching the raw `.bin`: a key can straddle the boundary between two image
+segments, in which case it is contiguous in DRAM but never contiguous in the file.
+
+Run it after provisioning a device, and after any `cp`, restore or rebuild that
+moves keys, plists or binaries around. It exits non-zero and names the device when
+something is wrong, which is the point: a collision is silent otherwise — you find
+out when a tag shows up in a city you have never visited.
+
+### The pool is a master key
+
+Holding one pool means one secret unlocks every device provisioned from it, which is
+a real trade for the collision-free guarantee. So: back it up with the per-device
+plists, keep it off the server, and note that you can **delete `keys/` once every
+device is provisioned** — the per-device plists are enough to track them, and the
+pool is only needed to allocate the next slice.
+
+Never commit `keys/`, `devices/` or any `accessory_list*.plist`: they hold the
+private keys, and a leaked plist means anyone can follow that tag. Both directories
+are already in `.gitignore`; the only thing that ever leaves your machine is the
+firmware, whose public keys the device broadcasts over BLE anyway.
+
+---
+
 ## Alternative: the macOS app
 
 `OpenHaystack/` still contains the upstream macOS retrieval application, which this
@@ -299,6 +387,9 @@ use `server/` instead.
 | Tag never appears, no key index in serial log | Firmware not flashed correctly (check the offsets) or the plist was imported into a different server. |
 | `binary size exceeds partition` | Too many keys for the 1 MB app partition: lower the key count or resize `factory` in `partitions.csv`. |
 | Build fails on a newer ESP-IDF | Use the container (`./build_firmware.sh`), which pins IDF v4.4.7. |
+| `verify`: two devices share keys | The pool was regenerated, or a file was copied between device directories. Re-provision the affected device with `--offset` inside its own free range, or rebuild the pool and every device. |
+| `verify`: keys missing from the firmware | The firmware in `devices/<name>/dist` was not built from that device's keys. Run `provision.py build <name>`, and import the plist that sits next to it. |
+| `cannot remove …/.build` after a build | An older run built as root in the container. Current versions build as your user; clear the old tree with `sudo rm -rf dist/.build` once. |
 
 ## Credits and licence
 
