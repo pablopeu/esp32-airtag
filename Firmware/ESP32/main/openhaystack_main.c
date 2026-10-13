@@ -16,9 +16,12 @@
 #include "esp_bt_main.h"
 #include "esp_bt_defs.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
 
 #define DELAY_IN_S 30
+/* Time the stack gets to actually send the beacon before sleeping */
+#define BEACON_TIME_MS 100
 
 static const char* LOG_TAG = "open_haystack";
 
@@ -47,6 +50,12 @@ static uint8_t public_keys[][28] = {
     {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc},
     // ...
 };
+
+/* Key rotation index and cold-boot marker, kept in RTC memory so the
+ * rotation continues across deep sleep cycles (RTC memory survives deep
+ * sleep but is undefined after a power-on reset). */
+RTC_DATA_ATTR static uint32_t key_index = 0;
+RTC_DATA_ATTR static uint32_t rtc_initialized = 0;
 
 /* https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/bluetooth/esp_gap_ble.html#_CPPv420esp_ble_adv_params_t */
 static esp_ble_adv_params_t ble_adv_params = {
@@ -130,35 +139,42 @@ void app_main(void)
 
     ESP_LOGI(LOG_TAG, "application initialized");
 
-    uint8_t* public_key;
-    uint key_index = 0;
-    while(true) {
-        esp_err_t status;
+    /* Start (or continue, after deep sleep) the key rotation */
+    const uint key_count = sizeof(public_keys) / sizeof(public_keys[0]);
+    if (!rtc_initialized || key_index >= key_count) {
+        key_index = 0;
+        rtc_initialized = 1;
+    }
+    uint8_t* public_key = public_keys[key_index];
+    uint current_key_index = key_index;
+    key_index = (key_index + 1) % key_count;
 
-	public_key = public_keys[key_index];
-        set_addr_from_key(rnd_addr, public_key);
-        set_payload_from_key(adv_data, public_key);
+    esp_err_t status;
+    set_addr_from_key(rnd_addr, public_key);
+    set_payload_from_key(adv_data, public_key);
 
-        ESP_LOGI(LOG_TAG, "using device address: %02x %02x %02x %02x %02x %02x", rnd_addr[0], rnd_addr[1], rnd_addr[2], rnd_addr[3], rnd_addr[4], rnd_addr[5]);
-        //register the scan callback function to the gap module
-        if ((status = esp_ble_gap_register_callback(esp_gap_cb)) != ESP_OK) {
-            ESP_LOGE(LOG_TAG, "gap register error: %s", esp_err_to_name(status));
-            return;
-        }
-    
-        if ((status = esp_ble_gap_set_rand_addr(rnd_addr)) != ESP_OK) {
-            ESP_LOGE(LOG_TAG, "couldn't set random address: %s", esp_err_to_name(status));
-            return;
-        }
-        if ((esp_ble_gap_config_adv_data_raw((uint8_t*)&adv_data, sizeof(adv_data))) != ESP_OK) {
-            ESP_LOGE(LOG_TAG, "couldn't configure BLE adv: %s", esp_err_to_name(status));
-            return;
-        }
-	ESP_LOGI(LOG_TAG, "Sending beacon (with key index %d)", key_index);
-        vTaskDelay(10);
-	esp_ble_gap_stop_advertising(); // Stop immediately after first beacon
-	vTaskDelay(DELAY_IN_S * 100); // pause after the public key has been broadcasted once
-	ESP_LOGI(LOG_TAG, "Woke up from sleep");
-	key_index = (key_index + 1) % (sizeof(public_keys)/sizeof(public_keys[0]));
-    }   
+    ESP_LOGI(LOG_TAG, "using device address: %02x %02x %02x %02x %02x %02x", rnd_addr[0], rnd_addr[1], rnd_addr[2], rnd_addr[3], rnd_addr[4], rnd_addr[5]);
+    //register the scan callback function to the gap module
+    if ((status = esp_ble_gap_register_callback(esp_gap_cb)) != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "gap register error: %s", esp_err_to_name(status));
+        return;
+    }
+
+    if ((status = esp_ble_gap_set_rand_addr(rnd_addr)) != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "couldn't set random address: %s", esp_err_to_name(status));
+        return;
+    }
+    if ((esp_ble_gap_config_adv_data_raw((uint8_t*)&adv_data, sizeof(adv_data))) != ESP_OK) {
+        ESP_LOGE(LOG_TAG, "couldn't configure BLE adv: %s", esp_err_to_name(status));
+        return;
+    }
+    ESP_LOGI(LOG_TAG, "Sending beacon (with key index %d)", current_key_index);
+    /* Give the stack time to send one single beacon */
+    vTaskDelay(pdMS_TO_TICKS(BEACON_TIME_MS));
+    esp_ble_gap_stop_advertising();
+
+    /* Deep sleep between beacons (~10 uA on a bare module) instead of
+     * blocking with vTaskDelay, which keeps CPU and BT controller awake. */
+    ESP_LOGI(LOG_TAG, "entering deep sleep for %d s (next key index %d)", DELAY_IN_S, key_index);
+    esp_deep_sleep(DELAY_IN_S * 1000000ULL);
 }
