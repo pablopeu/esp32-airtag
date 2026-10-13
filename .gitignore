@@ -111,3 +111,6 @@ iOSInjectionProject/
 
 # Exports folder 
 Exports/
+# find-you key generation outputs (contain private keys)
+pub_keys_c.txt
+accessory_list.plist

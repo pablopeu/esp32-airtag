@@ -6,13 +6,13 @@ More information can be found here: [https://positive.security/blog/find-you](ht
 
 ![Find You Cover](Resources/FindYouCover.png)
 
-**Please note:** The below mentioned `generate_keypairs.py` has been purposefully left out of this repository and as an exercise for the reader.
+**Please note:** The original release purposefully left out `generate_keypairs.py` as an exercise for the reader. This fork includes a working implementation (pure Python, no dependencies): it generates the key pairs on secp224r1, writes the public keys to `pub_keys_c.txt` in the exact format expected by the firmware, and the private keys to `accessory_list.plist` in the format expected by the retrieval application's import.
 
 ## Changes
 
 ### Tracker side
 
-- Added a python script (not included in this release as noted above) that pregenerates EC key pairs and generates:
+- Added a python script (`generate_keypairs.py`) that pregenerates EC key pairs and generates:
   - A list of public keys in C source code format to add to the firmware
   - A list of private keys as an OpenHaystack-compatible `.plist` file to import in the retrieval application
 - Added support to iterate over a preloaded list of public keys with 1 beacon per key and a configurable delay
@@ -26,7 +26,7 @@ More information can be found here: [https://positive.security/blog/find-you](ht
 
 ## Instructions
 
-1. Run `generate_keypairs.py` with the number of keypairs to generate as argument (e.g. `python3 generate_keypairs.py 2000`)
+1. Run `generate_keypairs.py` with the number of keypairs to generate as argument (e.g. `python3 generate_keypairs.py 2000`, optionally `--seed HEX` for reproducible key sets)
 2. Copy the array definition in `pub_keys_c.txt` into `Firmware/ESP32/main/openhaystack_main.c` (if desired, also change the delay time between beacons)
 3. Compile firmware and flash ESP32
 4. Compile and run the macOS retrieval application and import `accessory_list.plist` (generated in step #1)
