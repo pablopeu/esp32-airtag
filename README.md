@@ -399,11 +399,10 @@ use `server/` instead.
 - Key generation, battery-optimised rotation, build tooling and the web server: this fork.
 - Licence: AGPL-3.0-only, as upstream — see [LICENSE](LICENSE).
 
-### Provenance and the fork label
+### Provenance
 
-Upstream published its whole release as a single commit (`ab7a3a9`). This repository
-was created by forking [AscndX/esp32-airtag](https://github.com/AscndX/esp32-airtag),
-which points at that same commit and adds none of its own, so the label GitHub shows
-above is the repository that was forked rather than where the code comes from: the
-tree here is upstream's commit plus the commits listed in the log. The root of the
-network is `positive-security/find-you`.
+Upstream published its whole release as a single commit (`ab7a3a9`), so the history
+here is flat and easy to read: that commit is the root of the log, and every commit
+on top of it is this fork's. The GitHub label points at exactly where the code comes
+from — this repository is a fork of `positive-security/find-you`, the root of the
+network, with no repository in between.
